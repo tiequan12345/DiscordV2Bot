@@ -19,7 +19,7 @@ load_dotenv()
 # Parse command-line arguments
 parser = argparse.ArgumentParser(description='Discord Fast Channel Summarizer')
 parser.add_argument('--hours', type=int, default=12, help='Number of hours of chat history to fetch (default: 12)')
-parser.add_argument('--limit', type=int, default=1000, help='Maximum number of messages per channel (default: 1000)')
+parser.add_argument('--limit', type=int, default=50, help='Maximum number of messages per channel (default: 50)')
 parser.add_argument('--debug', action='store_true', help='Print messages to console instead of summarizing')
 args = parser.parse_args()
 
@@ -135,24 +135,52 @@ def generate_summary(text, model_name="google/gemini-2.0-flash-001"):
         return f"Error generating summary: {e}"
 
 def split_message(message, max_length=2000):
-    """Split a message into chunks of max_length"""
+    """Split a message into chunks of max_length while preserving blockquote formatting"""
     if len(message) <= max_length:
         return [message]
 
     parts = []
+    lines = message.split("\n")
     current_part = ""
-    words = message.split(" ")
-
-    for word in words:
-        if len(current_part) + len(word) + 1 <= max_length:
-            current_part += " " + word if current_part else word
+    
+    # Find where the header ends and the blockquote begins
+    header = ""
+    blockquote_start = 0
+    for i, line in enumerate(lines):
+        if line.startswith(">"):
+            blockquote_start = i
+            header = "\n".join(lines[:i])
+            break
+    
+    # If no blockquote found, use regular splitting
+    if not header:
+        current_part = ""
+        for line in lines:
+            if len(current_part) + len(line) + 1 <= max_length:
+                current_part += line + "\n"
+            else:
+                parts.append(current_part.rstrip())
+                current_part = line + "\n"
+        
+        if current_part:
+            parts.append(current_part.rstrip())
+        return parts
+    
+    # Process the blockquote part with proper formatting
+    current_part = header + "\n"
+    for i in range(blockquote_start, len(lines)):
+        line = lines[i]
+        if len(current_part) + len(line) + 1 <= max_length:
+            current_part += line + "\n"
         else:
-            parts.append(current_part)
-            current_part = word
-
+            parts.append(current_part.rstrip())
+            # Make sure continuation parts start with the blockquote marker
+            current_part = "> " + line[2:] if line.startswith("> ") else "> " + line
+            current_part += "\n"
+    
     if current_part:
-        parts.append(current_part)
-
+        parts.append(current_part.rstrip())
+    
     return parts
 
 def main():
@@ -208,7 +236,13 @@ def main():
                 
                 # Send summary to Discord
                 print(f"Sending summary to Discord...")
-                message_parts = split_message(f"**Summary of {channel_name}:**\n{summary}\n")
+                # Add blockquote formatting, but trim the last '>' if it creates a blank line at the end
+                formatted_lines = [f"> {line}" for line in summary.split("\n")]
+                # Remove any trailing empty quote line
+                if formatted_lines and formatted_lines[-1] == "> ":
+                    formatted_lines = formatted_lines[:-1]
+                formatted_summary = "\n".join(formatted_lines)
+                message_parts = split_message(f"**Summary of {channel_name}:**\n{formatted_summary}")
                 for part in message_parts:
                     send_message(OUTPUT_CHANNEL_ID, part)
                     time.sleep(1)  # Add a small delay between messages
