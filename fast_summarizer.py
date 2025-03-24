@@ -12,6 +12,8 @@ import os
 from datetime import datetime, timedelta
 import tiktoken
 from dotenv import load_dotenv
+import discord
+import asyncio
 
 # Load environment variables
 load_dotenv()
@@ -25,6 +27,7 @@ args = parser.parse_args()
 
 # Configuration
 TOKEN = os.getenv('DISCORD_TOKEN')  # Discord user token
+BOT_TOKEN = os.getenv('BOT_TOKEN')  # Discord bot token
 CHANNEL_IDS = [int(id) for id in os.getenv('CHANNEL_IDS', '').split(',') if id]  # Channels to monitor
 OUTPUT_CHANNEL_ID = int(os.getenv('OUTPUT_CHANNEL_ID', '0'))  # Channel to send summaries
 OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY')
@@ -35,6 +38,11 @@ headers = {
     'Content-Type': 'application/json',
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/94.0.4606.81 Safari/537.36'
 }
+
+# Set up Discord bot client
+# For newer versions of discord.py that require intents
+intents = discord.Intents.default()
+bot_client = discord.Client(intents=intents)
 
 def fetch_channel_info(channel_id):
     """Fetch channel name and other info"""
@@ -78,8 +86,21 @@ def fetch_messages(channel_id, limit=100, hours=12):
         print(f"Error fetching messages: {response.status_code}")
         return []
 
+async def send_bot_message(channel_id, content):
+    """Send a message using the bot client"""
+    try:
+        channel = bot_client.get_channel(channel_id)
+        if not channel:
+            channel = await bot_client.fetch_channel(channel_id)
+        
+        await channel.send(content)
+        return True
+    except Exception as e:
+        print(f"Error sending message via bot: {e}")
+        return False
+
 def send_message(channel_id, content):
-    """Send a message to a Discord channel"""
+    """Send a message to a Discord channel using user token (fallback)"""
     url = f"https://discord.com/api/v9/channels/{channel_id}/messages"
     payload = {"content": content}
     
@@ -183,7 +204,8 @@ def split_message(message, max_length=2000):
     
     return parts
 
-def main():
+async def process_channels():
+    """Process all channels and generate summaries"""
     print(f"Fast Discord Channel Summarizer")
     print(f"Fetching messages from the last {args.hours} hours, limit {args.limit} per channel")
     
@@ -234,8 +256,8 @@ def main():
                 print(f"Generating summary for {channel_name}...")
                 summary = generate_summary(conversation_text)
                 
-                # Send summary to Discord
-                print(f"Sending summary to Discord...")
+                # Send summary to Discord using bot
+                print(f"Sending summary to Discord using bot...")
                 # Add blockquote formatting, but trim the last '>' if it creates a blank line at the end
                 formatted_lines = [f"> {line}" for line in summary.split("\n")]
                 # Remove any trailing empty quote line
@@ -243,14 +265,93 @@ def main():
                     formatted_lines = formatted_lines[:-1]
                 formatted_summary = "\n".join(formatted_lines)
                 message_parts = split_message(f"**Summary of {channel_name}:**\n{formatted_summary}")
+                
                 for part in message_parts:
-                    send_message(OUTPUT_CHANNEL_ID, part)
-                    time.sleep(1)  # Add a small delay between messages
+                    success = await send_bot_message(OUTPUT_CHANNEL_ID, part)
+                    if not success:
+                        print("Failed to send via bot, falling back to user token")
+                        send_message(OUTPUT_CHANNEL_ID, part)
+                    await asyncio.sleep(1)  # Add a small delay between messages
                 
         except Exception as e:
             print(f"Error processing channel {channel_id}: {e}")
     
     print("Processing complete")
+
+@bot_client.event
+async def on_ready():
+    """Event handler when the bot is ready"""
+    print(f'Bot logged in as {bot_client.user}')
+    await process_channels()
+    await bot_client.close()  # Close the bot after processing is complete
+
+def main():
+    """Main function to run the script"""
+    if args.debug:
+        # In debug mode, we don't need the bot
+        for channel_id in CHANNEL_IDS:
+            try:
+                channel_info = fetch_channel_info(channel_id)
+                channel_name = channel_info.get('name', f'Unknown-{channel_id}') if channel_info else f'Unknown-{channel_id}'
+                
+                messages = fetch_messages(channel_id, limit=args.limit, hours=args.hours)
+                
+                if messages:
+                    conversation_text = ""
+                    for msg in messages:
+                        if msg.get('content'):
+                            author = msg.get('author', {}).get('username', 'Unknown')
+                            conversation_text += f"{author}: {msg['content']}\n"
+                    
+                    print("\n" + "="*50)
+                    print(f"CONVERSATION FROM CHANNEL: {channel_name}")
+                    print("="*50)
+                    print(conversation_text)
+                    print("="*50 + "\n")
+            except Exception as e:
+                print(f"Error in debug mode for channel {channel_id}: {e}")
+    else:
+        # Run the bot
+        try:
+            bot_client.run(BOT_TOKEN)
+        except Exception as e:
+            print(f"Failed to run bot: {e}")
+            print("Falling back to user token method...")
+            # Fallback to the old method
+            for channel_id in CHANNEL_IDS:
+                try:
+                    channel_info = fetch_channel_info(channel_id)
+                    if not channel_info:
+                        continue
+                        
+                    channel_name = channel_info.get('name', f'Unknown-{channel_id}')
+                    messages = fetch_messages(channel_id, limit=args.limit, hours=args.hours)
+                    
+                    if not messages:
+                        continue
+                        
+                    conversation_text = ""
+                    for msg in messages:
+                        if msg.get('content'):
+                            author = msg.get('author', {}).get('username', 'Unknown')
+                            conversation_text += f"{author}: {msg['content']}\n"
+                    
+                    if not conversation_text:
+                        continue
+                        
+                    summary = generate_summary(conversation_text)
+                    formatted_lines = [f"> {line}" for line in summary.split("\n")]
+                    if formatted_lines and formatted_lines[-1] == "> ":
+                        formatted_lines = formatted_lines[:-1]
+                    formatted_summary = "\n".join(formatted_lines)
+                    message_parts = split_message(f"**Summary of {channel_name}:**\n{formatted_summary}")
+                    
+                    for part in message_parts:
+                        send_message(OUTPUT_CHANNEL_ID, part)
+                        time.sleep(1)
+                        
+                except Exception as e:
+                    print(f"Error processing channel {channel_id}: {e}")
 
 if __name__ == "__main__":
     main() 
