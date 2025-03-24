@@ -67,24 +67,42 @@ def load_prompt():
         return "Please summarize the following text in bullet point format for a cryptocurrency trader looking for alpha so he can act on important ideas. If the bullet point doesn't have anything to do with defi or crypto, just skip it."
 
 def fetch_messages(channel_id, limit=100, hours=12):
-    """Fetch messages from a channel without scraping members"""
-    url = f"https://discord.com/api/v9/channels/{channel_id}/messages?limit={limit}"
-    response = requests.get(url, headers=headers)
+    """Fetch all messages from a channel within the time window using pagination"""
+    cutoff_time = datetime.utcnow() - timedelta(hours=hours)
+    cutoff_str = cutoff_time.isoformat()
     
-    if response.status_code == 200:
+    all_messages = []
+    last_id = None
+    
+    while True:
+        # Build URL with pagination
+        url = f"https://discord.com/api/v9/channels/{channel_id}/messages?limit=100"
+        if last_id:
+            url += f"&before={last_id}"
+            
+        response = requests.get(url, headers=headers)
+        
+        if response.status_code != 200:
+            print(f"Error fetching messages: {response.status_code}")
+            break
+            
         messages = response.json()
+        if not messages:  # No more messages to fetch
+            break
+            
+        # Filter by time and add to our list
+        for msg in messages:
+            if msg['timestamp'] <= cutoff_str:
+                return all_messages  # We've hit our time cutoff
+            all_messages.append(msg)
+            
+        # Update last_id for next page
+        last_id = messages[-1]['id']
         
-        # Filter by time
-        cutoff_time = datetime.utcnow() - timedelta(hours=hours)
-        cutoff_str = cutoff_time.isoformat()
-        
-        # Keep messages newer than cutoff
-        filtered_messages = [msg for msg in messages if msg['timestamp'] > cutoff_str]
-        
-        return filtered_messages
-    else:
-        print(f"Error fetching messages: {response.status_code}")
-        return []
+        # Optional: Add a small delay to avoid rate limits
+        time.sleep(0.5)
+    
+    return all_messages
 
 async def send_bot_message(channel_id, content):
     """Send a message using the bot client"""
