@@ -205,11 +205,15 @@ def split_message(message, max_length=2000):
     return parts
 
 async def process_channels():
-    """Process all channels and generate summaries"""
+    """Process all channels and generate a single aggregated summary"""
     print(f"Fast Discord Channel Summarizer")
     print(f"Fetching messages from the last {args.hours} hours, limit {args.limit} per channel")
     
-    # Process each channel
+    # Aggregate all messages from all channels
+    all_messages = []
+    channel_names = {}
+    
+    # First pass: collect all messages and channel names
     for channel_id in CHANNEL_IDS:
         try:
             # Get channel info
@@ -219,6 +223,7 @@ async def process_channels():
                 continue
                 
             channel_name = channel_info.get('name', f'Unknown-{channel_id}')
+            channel_names[channel_id] = channel_name
             print(f"Processing channel: {channel_name}")
             
             # Fetch messages
@@ -230,51 +235,65 @@ async def process_channels():
                 
             print(f"Found {len(messages)} messages in {channel_name}")
             
-            # Extract content
-            conversation_text = ""
+            # Add messages to the aggregate list
             for msg in messages:
                 if msg.get('content'):
                     author = msg.get('author', {}).get('username', 'Unknown')
-                    conversation_text += f"{author}: {msg['content']}\n"
+                    all_messages.append({
+                        'channel': channel_name,
+                        'author': author,
+                        'content': msg['content']
+                    })
             
-            if not conversation_text:
-                print(f"No text content found in messages for {channel_name}")
-                continue
-                
-            # Debug mode - print to console
-            if args.debug:
-                print("\n" + "="*50)
-                print(f"CONVERSATION FROM CHANNEL: {channel_name}")
-                print("="*50)
-                print(conversation_text)
-                print("="*50 + "\n")
-                
-                # Debug mode doesn't send anything to Discord
-                
-            else:
-                # Generate summary using OpenRouter
-                print(f"Generating summary for {channel_name}...")
-                summary = generate_summary(conversation_text)
-                
-                # Send summary to Discord using bot
-                print(f"Sending summary to Discord using bot...")
-                # Add blockquote formatting, but trim the last '>' if it creates a blank line at the end
-                formatted_lines = [f"> {line}" for line in summary.split("\n")]
-                # Remove any trailing empty quote line
-                if formatted_lines and formatted_lines[-1] == "> ":
-                    formatted_lines = formatted_lines[:-1]
-                formatted_summary = "\n".join(formatted_lines)
-                message_parts = split_message(f"**Summary of {channel_name}:**\n{formatted_summary}")
-                
-                for part in message_parts:
-                    success = await send_bot_message(OUTPUT_CHANNEL_ID, part)
-                    if not success:
-                        print("Failed to send via bot, falling back to user token")
-                        send_message(OUTPUT_CHANNEL_ID, part)
-                    await asyncio.sleep(1)  # Add a small delay between messages
-                
         except Exception as e:
             print(f"Error processing channel {channel_id}: {e}")
+    
+    if not all_messages:
+        print("No messages found in any channels")
+        return
+    
+    # Sort messages by timestamp if available
+    all_messages.sort(key=lambda x: x.get('timestamp', ''))
+    
+    # Create aggregated conversation text
+    conversation_text = ""
+    for msg in all_messages:
+        conversation_text += f"[{msg['channel']}] {msg['author']}: {msg['content']}\n"
+    
+    # Debug mode - print to console
+    if args.debug:
+        print("\n" + "="*50)
+        print("AGGREGATED CONVERSATION FROM ALL CHANNELS")
+        print("="*50)
+        print(conversation_text)
+        print("="*50 + "\n")
+        
+        # Debug mode doesn't send anything to Discord
+        
+    else:
+        # Generate summary using OpenRouter
+        print(f"Generating aggregated summary for {len(all_messages)} messages...")
+        summary = generate_summary(conversation_text)
+        
+        # Send summary to Discord using bot
+        print(f"Sending summary to Discord using bot...")
+        # Add blockquote formatting, but trim the last '>' if it creates a blank line at the end
+        formatted_lines = [f"> {line}" for line in summary.split("\n")]
+        # Remove any trailing empty quote line
+        if formatted_lines and formatted_lines[-1] == "> ":
+            formatted_lines = formatted_lines[:-1]
+        formatted_summary = "\n".join(formatted_lines)
+        
+        # Create header with channel list
+        channel_list = ", ".join(channel_names.values())
+        message_parts = split_message(f"**Aggregated Summary of {len(channel_names)} Channels:**\n{channel_list}\n\n{formatted_summary}")
+        
+        for part in message_parts:
+            success = await send_bot_message(OUTPUT_CHANNEL_ID, part)
+            if not success:
+                print("Failed to send via bot, falling back to user token")
+                send_message(OUTPUT_CHANNEL_ID, part)
+            await asyncio.sleep(1)  # Add a small delay between messages
     
     print("Processing complete")
 
