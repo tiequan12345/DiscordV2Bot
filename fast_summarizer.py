@@ -253,71 +253,60 @@ async def generate_summary(text, config_type_local, model_name="google/gemini-2.
         return f"Error generating summary: {e}"
 
 def split_message(message, max_length=2000):
-    """Split a message into chunks of max_length while preserving blockquote formatting"""
+    """Split a message into chunks of max_length."""
     if len(message) <= max_length:
         return [message]
 
     parts = []
     lines = message.split("\n")
     current_part = ""
-    header = ""
-    blockquote_start_index = -1
 
-    # Find header and start of blockquote
-    for i, line in enumerate(lines):
-        if line.startswith(">"):
-            blockquote_start_index = i
-            header = "\n".join(lines[:i])
-            break
-    else: # No blockquote found
-        header = message # Treat the whole message as header for splitting
-        lines = header.split("\n") # Re-split for simple splitting
-
-    # Simple splitting if no blockquote
-    if blockquote_start_index == -1:
-        current_part = ""
-        for line in lines:
-            if len(current_part) + len(line) + 1 <= max_length:
-                current_part += line + "\n"
-            else:
+    for line in lines:
+        # Check if adding the next line exceeds the max length
+        # Add 1 for the newline character that will join lines
+        if len(current_part) + len(line) + 1 > max_length:
+            # If current_part is not empty, add it to parts
+            if current_part:
                 parts.append(current_part.rstrip())
-                current_part = line + "\n"
-        if current_part:
-            parts.append(current_part.rstrip())
-        return parts
-
-    # Splitting with blockquote handling
-    current_part = header + "\n"
-    for i in range(blockquote_start_index, len(lines)):
-        line = lines[i]
-        if len(current_part) + len(line) + 1 <= max_length:
-            current_part += line + "\n"
-        else:
-            # Ensure the previous part ends cleanly
-            parts.append(current_part.rstrip())
-            # Start the new part, ensuring blockquote continues
-            # Handle lines that might not start with "> " if user input was inconsistent
-            if line.startswith(">"):
-                 current_part = line + "\n"
+            # Start the new part with the current line
+            # Handle the case where a single line is longer than max_length
+            if len(line) > max_length:
+                 # If a single line is too long, split it aggressively
+                 # This is a basic split; more sophisticated word boundary splitting could be added
+                 for i in range(0, len(line), max_length):
+                     parts.append(line[i:i+max_length])
+                 current_part = "" # Reset current part after handling the long line
             else:
-                 current_part = "> " + line + "\n" # Add quote if missing
+                 current_part = line + "\n"
+        else:
+            # Add the line to the current part
+            current_part += line + "\n"
 
-    # Add the last part
+    # Add the last part if it's not empty
     if current_part:
         parts.append(current_part.rstrip())
 
-    # Post-process to ensure continuations start correctly
-    processed_parts = [parts[0]] # First part is always correct
-    for i in range(1, len(parts)):
-        part = parts[i]
-        if not part.startswith(">"):
-             # If a continuation doesn't start with '>', add it.
-             # This assumes continuations SHOULD be blockquoted.
-             processed_parts.append("> " + part)
-        else:
-             processed_parts.append(part)
+    # Handle edge case where the input message was empty or only newlines
+    if not parts and not message.strip():
+        return []
+    elif not parts: # If message had content but resulted in no parts (e.g., single long line handled)
+         # This case might be redundant due to the aggressive split logic, but safe to keep
+         if len(message) > max_length:
+             # Re-apply aggressive split if somehow missed
+             for i in range(0, len(message), max_length):
+                 parts.append(message[i:i+max_length])
+         elif message: # Non-empty message shorter than max_length wasn't added
+             parts.append(message)
 
-    return processed_parts
+
+    # Ensure no empty strings are in the final list, unless the original message was effectively empty
+    final_parts = [p for p in parts if p]
+    if not final_parts and message.strip(): # Original had content, but parts are empty? Append original.
+        return [message] if len(message) <= max_length else parts # Fallback to original parts if split failed unexpectedly
+    elif not final_parts and not message.strip(): # Original was empty/whitespace
+        return []
+    else:
+        return final_parts
 
 
 async def process_channels_and_summarize(config_type_local):
@@ -388,13 +377,18 @@ async def process_channels_and_summarize(config_type_local):
     summary = await generate_summary(conversation_text, config_type_local)
 
     # Format summary
-    formatted_lines = [f"> {line}" for line in summary.split("\n") if line.strip()] # Add quote, skip empty lines
-    formatted_summary = "\n".join(formatted_lines)
+    # formatted_lines = [f"> {line}" for line in summary.split("\n") if line.strip()] # Add quote, skip empty lines
+    # formatted_summary = "\n".join(formatted_lines)
+    # Use the raw summary directly, assuming it's already formatted (e.g., with newlines)
+    formatted_summary = summary.strip() # Remove leading/trailing whitespace from the raw summary
 
     # Create header
     channel_list = ", ".join(channel_names.values())
     header = f"**Aggregated Summary ({config_type_local.lower().capitalize()}) of {len(channel_names)} Channels ({total_messages_found} msgs):**\n{channel_list}\n\n"
-    full_message = header + formatted_summary
+    # ascii_art_quote removed
+    ending_ascii_art = """* . ﹢ ˖ ✦ ¸ . ﹢ ° ¸. ° ˖ ･ ·̩ ｡ ☆ ﾟ ＊ ¸* . ﹢ ˖ ✦ ¸ . ﹢ ° ¸. ° ˖ ･ ·̩ ｡ ☆ ﾟ ＊ ¸* . ﹢ ˖ ✦ ¸ . ﹢ ° ¸. ° ˖ ･ ·̩ ｡ ☆ ﾟ ＊ ¸* . ﹢ ˖ ✦ ¸ . ﹢ ° ¸. ° ˖ ･ ·̩ ｡ ☆ ﾟ ＊ ¸* . ﹢ ˖ ✦ ¸ . ﹢ ° ¸. ° ˖ ･ ·̩ ｡ ☆ ﾟ ＊ ¸* . ﹢ ˖ ✦ ¸ . ﹢ ° ¸. ° ˖ ･ ·̩ ｡ ☆ ﾟ ＊ ¸* . ﹢ ˖ ✦ ¸ . ﹢ ° ¸. ° ˖ ･ ·̩ ｡ ☆ ﾟ ＊"""
+    ending_art_code_block = f"\n\n\n```\n{ending_ascii_art}\n```" # Added extra \n for separation
+    full_message = header + formatted_summary + ending_art_code_block # Removed ascii_art_quote + "\n\n"
 
     print("--- Channel Processing Complete ---")
     return full_message

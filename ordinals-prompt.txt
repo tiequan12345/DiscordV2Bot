@@ -16,6 +16,7 @@ Include All Relevant Links:
 Include every link shared in the chat, except for GIFs (typically from http://tenor.com).
 Do not fabricate, alter, or omit any links.
 Present links clearly and ensure they are accurately copied.
+When including a link, display the full raw URL directly in the text. Do NOT format it as a markdown link (e.g., `[URL](URL)`). Simply write the URL itself.
 If multiple links are shared for the same project, list them together under that project.
 Do not summarize any non-relevant information like members greeting each other or off-topic discussion.
 Share Group Sentiment:
