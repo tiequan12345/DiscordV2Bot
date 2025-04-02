@@ -60,13 +60,8 @@ elif not TOKEN:
      print("Warning: DISCORD_TOKEN not set. Fallback method will not work if the bot fails.")
 
 
-# Set up headers for Discord API (used by fallback and channel info)
-headers = {
-    'Authorization': TOKEN if TOKEN else '', # Use token if available
-    'Content-Type': 'application/json',
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/94.0.4606.81 Safari/537.36'
-}
-
+# Global headers dictionary removed as it's no longer broadly needed.
+# Functions requiring headers will create them locally.
 # Set up Discord bot client
 intents = discord.Intents.default()
 # Required for message content access if your bot needs it, but we fetch via HTTP API
@@ -75,25 +70,7 @@ bot_client = discord.Client(intents=intents)
 
 # --- Helper Functions ---
 
-async def fetch_channel_info(channel_id):
-    """Fetch channel name and other info asynchronously using user token"""
-    if not TOKEN:
-        print(f"Skipping channel info fetch for {channel_id}: DISCORD_TOKEN not available.")
-        return {'name': f'Unknown-{channel_id}'} # Return default name
-
-    url = f"https://discord.com/api/v9/channels/{channel_id}"
-    try:
-        # Run the synchronous requests.get in a separate thread
-        response = await asyncio.to_thread(requests.get, url, headers=headers)
-        if response.status_code == 200:
-            return response.json()
-        else:
-            print(f"Error fetching channel info for {channel_id}: {response.status_code}")
-            return {'name': f'ErrorFetching-{channel_id}'} # Indicate error in name
-    except Exception as e:
-        print(f"Exception during fetch_channel_info for {channel_id}: {e}")
-        return {'name': f'Exception-{channel_id}'} # Indicate error in name
-
+# Original fetch_channel_info removed, logic moved to fetch_and_process_channel_data
 def load_prompt(config_type_local):
     """Load the prompt from the appropriate file based on config"""
     prompt_file = 'prompt.txt' if config_type_local.lower() == 'defi' else 'ordinals-prompt.txt'
@@ -105,73 +82,150 @@ def load_prompt(config_type_local):
         # Fallback prompt if file can't be loaded
         return "Please summarize the following text in bullet point format for a cryptocurrency trader looking for alpha so he can act on important ideas. If the bullet point doesn't have anything to do with defi or crypto, just skip it."
 
-async def fetch_messages(channel_id, hours=12):
-    """Fetch all messages from a channel within the time window using pagination asynchronously via user token"""
-    if not TOKEN:
-        print(f"Skipping message fetch for {channel_id}: DISCORD_TOKEN not available.")
-        return []
+# Original fetch_messages removed, logic moved to fetch_and_process_channel_data
 
-    cutoff_time = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=hours)
-    all_messages = []
-    last_id = None
+async def fetch_and_process_channel_data(channel_ids_to_fetch, hours_to_fetch, user_token_for_fetching):
+    """
+    Fetches channel info and messages concurrently, aggregates, and sorts them.
+    Uses the provided user token for fetching operations if available.
+    """
+    print(f"Fetching data for {len(channel_ids_to_fetch)} channels using {'User Token' if user_token_for_fetching else 'No Token (Info Only)'}...")
 
-    while True:
-        url = f"https://discord.com/api/v9/channels/{channel_id}/messages?limit=100"
-        if last_id:
-            url += f"&before={last_id}"
+    all_messages_data = []
+    channel_names = {}
+    total_messages_found = 0
 
-        try:
-            response = await asyncio.to_thread(requests.get, url, headers=headers)
+    # Need headers for user token requests if token is provided
+    local_headers = {}
+    if user_token_for_fetching:
+        local_headers = {
+            'Authorization': user_token_for_fetching,
+            'Content-Type': 'application/json',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/94.0.4606.81 Safari/537.36'
+        }
 
-            if response.status_code == 401 or response.status_code == 403:
-                 print(f"Error fetching messages for {channel_id}: Unauthorized (401/403). Check DISCORD_TOKEN permissions.")
-                 break
-            if response.status_code != 200:
-                print(f"Error fetching messages for {channel_id}: {response.status_code}")
+    # Define internal helper to fetch messages for a single channel using the provided token
+    async def _fetch_messages_internal(channel_id, cutoff_time):
+        if not user_token_for_fetching:
+            print(f"Skipping message fetch for {channel_id}: User token not provided for fetching.")
+            return []
+
+        messages_list = []
+        last_id = None
+        while True:
+            url = f"https://discord.com/api/v9/channels/{channel_id}/messages?limit=100"
+            if last_id:
+                url += f"&before={last_id}"
+            try:
+                # Use local_headers with the potentially provided user token
+                response = await asyncio.to_thread(requests.get, url, headers=local_headers)
+                if response.status_code == 401 or response.status_code == 403:
+                    print(f"Error fetching messages for {channel_id}: Unauthorized (401/403). Check User Token permissions.")
+                    break
+                if response.status_code != 200:
+                    print(f"Error fetching messages for {channel_id}: {response.status_code}")
+                    break
+
+                messages = response.json()
+                if not messages: break
+
+                page_messages_in_window = []
+                hit_cutoff_in_page = False
+                for msg in messages:
+                    msg_timestamp_str = msg.get('timestamp')
+                    if not msg_timestamp_str: continue
+                    try:
+                        # Ensure msg_time is timezone-aware for comparison
+                        msg_time = datetime.datetime.fromisoformat(msg_timestamp_str.replace('Z', '+00:00'))
+                        if msg_time > cutoff_time: # cutoff_time is already timezone-aware
+                            page_messages_in_window.append(msg)
+                        else:
+                            hit_cutoff_in_page = True
+                    except ValueError:
+                        print(f"Warning: Could not parse timestamp: {msg_timestamp_str}")
+                        continue
+
+                messages_list.extend(page_messages_in_window)
+                if hit_cutoff_in_page: break
+                last_id = messages[-1]['id']
+                await asyncio.sleep(0.5) # Rate limiting
+            except Exception as e:
+                print(f"Exception during _fetch_messages_internal page request for {channel_id}: {e}")
                 break
+        # Final filter (redundant because of hit_cutoff_in_page logic, but safe)
+        return [
+            msg for msg in messages_list
+            if datetime.datetime.fromisoformat(msg['timestamp'].replace('Z', '+00:00')) > cutoff_time
+        ]
 
-            messages = response.json()
+
+    # Define internal helper to fetch channel info
+    async def _fetch_channel_info_internal(channel_id):
+         if not user_token_for_fetching:
+             print(f"Skipping channel info fetch for {channel_id}: User token not provided for fetching.")
+             return {'name': f'Unknown-{channel_id}'}
+         url = f"https://discord.com/api/v9/channels/{channel_id}"
+         try:
+             response = await asyncio.to_thread(requests.get, url, headers=local_headers)
+             if response.status_code == 200:
+                 return response.json()
+             else:
+                 print(f"Error fetching channel info for {channel_id}: {response.status_code}")
+                 return {'name': f'ErrorFetching-{channel_id}'}
+         except Exception as e:
+             print(f"Exception during _fetch_channel_info_internal for {channel_id}: {e}")
+             return {'name': f'Exception-{channel_id}'}
+
+    # --- Concurrently fetch info and messages ---
+    fetch_tasks = []
+    channel_processing_tasks = {} # Store tuples of (info_task, messages_task)
+
+    # Ensure cutoff time is timezone-aware
+    cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=hours_to_fetch)
+
+    for channel_id in channel_ids_to_fetch:
+        info_task = asyncio.create_task(_fetch_channel_info_internal(channel_id))
+        # Pass the cutoff time to the message fetcher
+        messages_task = asyncio.create_task(_fetch_messages_internal(channel_id, cutoff))
+        fetch_tasks.append(messages_task) # We primarily wait on messages
+        channel_processing_tasks[channel_id] = (info_task, messages_task)
+
+    # Wait for all message fetches to complete
+    await asyncio.gather(*fetch_tasks)
+
+    # Process results
+    for channel_id, (info_task, messages_task) in channel_processing_tasks.items():
+        try:
+            channel_info = await info_task # Get info result
+            channel_name = channel_info.get('name', f'Unknown-{channel_id}')
+            channel_names[channel_id] = channel_name
+            print(f"Processing channel data: {channel_name} ({channel_id})")
+
+            messages = messages_task.result() # Get message result (already awaited)
+
             if not messages:
-                break # No more messages
+                print(f"  No relevant messages found in the last {hours_to_fetch} hours.")
+                continue
 
-            page_messages_in_window = []
-            hit_cutoff_in_page = False
+            print(f"  Found {len(messages)} relevant messages.")
+            total_messages_found += len(messages)
+
             for msg in messages:
-                msg_timestamp_str = msg.get('timestamp')
-                if not msg_timestamp_str: continue
-
-                try:
-                    msg_time = datetime.datetime.fromisoformat(msg_timestamp_str.replace('Z', '+00:00'))
-                    if msg_time > cutoff_time:
-                        page_messages_in_window.append(msg)
-                    else:
-                        hit_cutoff_in_page = True
-                        # Don't break inner loop yet, collect all recent messages from this page
-                except ValueError:
-                    print(f"Warning: Could not parse timestamp: {msg_timestamp_str}")
-                    continue
-
-            all_messages.extend(page_messages_in_window)
-
-            # If the last message processed on this page was older than cutoff, stop pagination
-            if hit_cutoff_in_page:
-                 break
-
-            last_id = messages[-1]['id']
-            await asyncio.sleep(0.5) # Rate limiting
-
+                if msg.get('content'):
+                    author = msg.get('author', {}).get('global_name') or msg.get('author', {}).get('username', 'Unknown')
+                    all_messages_data.append({
+                        'channel': channel_name,
+                        'author': author,
+                        'content': msg['content'],
+                        'timestamp': msg.get('timestamp') # Keep timestamp for sorting
+                    })
         except Exception as e:
-            print(f"Exception during fetch_messages page request for {channel_id}: {e}")
-            break # Stop fetching on error
+            print(f"Error processing results for channel {channel_id}: {e}")
 
-    # Final filter (should be redundant but safe)
-    final_filtered_messages = [
-        msg for msg in all_messages
-        if datetime.datetime.fromisoformat(msg['timestamp'].replace('Z', '+00:00')) > cutoff_time
-    ]
-    return final_filtered_messages
+    # Sort messages by timestamp
+    all_messages_data.sort(key=lambda x: x.get('timestamp', ''))
 
-
+    return all_messages_data, channel_names, total_messages_found
 async def send_bot_message(channel_id, content):
     """Send a message using the bot client"""
     try:
@@ -198,11 +252,18 @@ def send_user_message(channel_id, content):
         print(f"Cannot send fallback message to {channel_id}: DISCORD_TOKEN not available.")
         return False
 
+    # Create headers locally for this request
+    local_headers = {
+        'Authorization': TOKEN, # We already checked TOKEN exists
+        'Content-Type': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/94.0.4606.81 Safari/537.36'
+    }
+
     url = f"https://discord.com/api/v9/channels/{channel_id}/messages"
     payload = {"content": content}
     try:
-        # Use requests directly (this function is called synchronously from fallback)
-        response = requests.post(url, headers=headers, json=payload)
+        # Use requests directly with locally created headers
+        response = requests.post(url, headers=local_headers, json=payload)
         if response.status_code == 200:
             return True
         else:
@@ -211,7 +272,6 @@ def send_user_message(channel_id, content):
     except Exception as e:
         print(f"Exception sending message via user token: {e}")
         return False
-
 async def generate_summary(text, config_type_local, model_name="google/gemini-2.0-flash-001"):
     """Generate a summary using OpenRouter API asynchronously"""
     print(f"Generating summary using {model_name} for config '{config_type_local.lower()}'...")
@@ -310,89 +370,55 @@ def split_message(message, max_length=2000):
 
 
 async def process_channels_and_summarize(config_type_local):
-    """Fetches messages, aggregates, summarizes, and prepares the summary message content."""
+    """
+    Uses the unified fetch function, generates a summary, and prepares the message content.
+    This version is intended for the primary (bot) execution path.
+    """
     print(f"--- Starting Channel Processing ({config_type_local.lower()}) ---")
     print(f"Fetching messages from the last {args.hours} hours.")
 
-    all_messages_data = []
-    channel_names = {}
-
-    # Fetch channel info and messages concurrently
-    fetch_tasks = []
-    channel_info_tasks = {}
-    for channel_id in CHANNEL_IDS:
-        info_task = asyncio.create_task(fetch_channel_info(channel_id))
-        messages_task = asyncio.create_task(fetch_messages(channel_id, hours=args.hours))
-        fetch_tasks.append(messages_task) # Gather message tasks
-        channel_info_tasks[channel_id] = (info_task, messages_task)
-
-    # Wait for all message fetches to complete
-    await asyncio.gather(*fetch_tasks) # Don't need info results yet
-
-    # Process results
-    total_messages_found = 0
-    for channel_id, (info_task, messages_task) in channel_info_tasks.items():
-        try:
-            # Now await the info task (should be fast as it likely completed)
-            channel_info = await info_task
-            channel_name = channel_info.get('name', f'Unknown-{channel_id}')
-            channel_names[channel_id] = channel_name
-            print(f"Processing channel: {channel_name} ({channel_id})")
-
-            messages = messages_task.result() # Get message result (already awaited)
-
-            if not messages:
-                print(f"  No messages found in the last {args.hours} hours.")
-                continue
-
-            print(f"  Found {len(messages)} messages.")
-            total_messages_found += len(messages)
-
-            for msg in messages:
-                if msg.get('content'): # Ensure content exists
-                    author = msg.get('author', {}).get('global_name') or msg.get('author', {}).get('username', 'Unknown') # Prefer global_name
-                    all_messages_data.append({
-                        'channel': channel_name,
-                        'author': author,
-                        'content': msg['content'],
-                        'timestamp': msg.get('timestamp') # Keep timestamp for sorting
-                    })
-        except Exception as e:
-            print(f"Error processing results for channel {channel_id}: {e}")
+    # Use the unified function. Pass the global user TOKEN for fetching info/messages,
+    # as this path originally relied on it via fetch_channel_info/fetch_messages.
+    # Note: TOKEN is a global variable loaded from environment.
+    all_messages_data, channel_names, total_messages_found = await fetch_and_process_channel_data(
+        CHANNEL_IDS, args.hours, TOKEN
+    )
 
     if not all_messages_data:
         print("No messages found in any channels to summarize.")
         return None # Indicate no summary generated
 
-    # Sort messages by timestamp
-    all_messages_data.sort(key=lambda x: x.get('timestamp', ''))
-
-    # Create aggregated conversation text
+    # Aggregated text creation
     conversation_text = ""
     for msg in all_messages_data:
-        conversation_text += f"[{msg['channel']}] {msg['author']}: {msg['content']}\n"
+        # Ensure content exists before appending
+        if msg.get('content'):
+            conversation_text += f"[{msg['channel']}] {msg['author']}: {msg['content']}\n"
+
+    if not conversation_text.strip():
+        print("No message content found to summarize after filtering.")
+        return None
 
     # Generate summary
     print(f"Generating aggregated summary for {total_messages_found} messages...")
+    # Pass config_type for prompt loading within generate_summary
     summary = await generate_summary(conversation_text, config_type_local)
 
-    # Format summary
-    # formatted_lines = [f"> {line}" for line in summary.split("\n") if line.strip()] # Add quote, skip empty lines
-    # formatted_summary = "\n".join(formatted_lines)
-    # Use the raw summary directly, assuming it's already formatted (e.g., with newlines)
-    formatted_summary = summary.strip() # Remove leading/trailing whitespace from the raw summary
+    # Format summary (using raw summary as per original logic in the bot path)
+    formatted_summary = summary.strip() # Remove leading/trailing whitespace
 
     # Create header
     channel_list = ", ".join(channel_names.values())
     header = f"**Aggregated Summary ({config_type_local.lower().capitalize()}) of {len(channel_names)} Channels ({total_messages_found} msgs):**\n{channel_list}\n\n"
-    # ascii_art_quote removed
+
+    # Ending ASCII art
     ending_ascii_art = """* . ﹢ ˖ ✦ ¸ . ﹢ ° ¸. ° ˖ ･ ·̩ ｡ ☆ ﾟ ＊ ¸* . ﹢ ˖ ✦ ¸ . ﹢ ° ¸. ° ˖ ･ ·̩ ｡ ☆ ﾟ ＊ ¸* . ﹢ ˖ ✦ ¸ . ﹢ ° ¸. ° ˖ ･ ·̩ ｡ ☆ ﾟ ＊ ¸* . ﹢ ˖ ✦ ¸ . ﹢ ° ¸. ° ˖ ･ ·̩ ｡ ☆ ﾟ ＊ ¸* . ﹢ ˖ ✦ ¸ . ﹢ ° ¸. ° ˖ ･ ·̩ ｡ ☆ ﾟ ＊ ¸* . ﹢ ˖ ✦ ¸ . ﹢ ° ¸. ° ˖ ･ ·̩ ｡ ☆ ﾟ ＊ ¸* . ﹢ ˖ ✦ ¸ . ﹢ ° ¸. ° ˖ ･ ·̩ ｡ ☆ ﾟ ＊"""
     ending_art_code_block = f"\n\n\n```\n{ending_ascii_art}\n```" # Added extra \n for separation
-    full_message = header + formatted_summary + ending_art_code_block # Removed ascii_art_quote + "\n\n"
+
+    full_message = header + formatted_summary + ending_art_code_block
 
     print("--- Channel Processing Complete ---")
     return full_message
-
 
 # --- Bot Event Handler ---
 
@@ -443,85 +469,72 @@ async def on_ready():
 # --- Fallback Logic ---
 
 def run_fallback_synchronously(config_type_fallback):
-    """Fetches messages, summarizes, and sends using user token. Runs synchronously."""
+    """
+    Fetches messages using the unified function, summarizes, and sends using user token.
+    Runs synchronously using asyncio.run().
+    """
     print("--- Starting Fallback Processing (User Token) ---")
 
     if not TOKEN:
         print("Error: DISCORD_TOKEN not set. Cannot run fallback.")
         return
 
-    # Re-fetch necessary config for fallback context (could be passed as args too)
-    channel_ids_str_fallback = os.getenv(f'{config_type_fallback}_CHANNEL_IDS', '')
-    channel_ids_fallback = [int(id) for id in channel_ids_str_fallback.split(',') if id]
-    output_channel_id_fallback = int(os.getenv(f'{config_type_fallback}_OUTPUT_CHANNEL_ID', '0'))
-
-    if not channel_ids_fallback or output_channel_id_fallback == 0:
-         print(f"Error: Missing fallback environment variables for config '{config_type_fallback.lower()}'. Cannot proceed.")
+    # Use globally loaded CHANNEL_IDS and OUTPUT_CHANNEL_ID for the specified config
+    if not CHANNEL_IDS or OUTPUT_CHANNEL_ID == 0:
+         print(f"Error: Missing environment variables for fallback config '{config_type_fallback.lower()}'. Cannot proceed.")
          return
 
-    # --- Replicate processing logic synchronously using asyncio.run ---
-    all_messages_data_fallback = []
-    channel_names_fallback = {}
-    total_messages_fallback = 0
-
+    # --- Fetch data using the unified function ---
     print(f"Fetching messages from the last {args.hours} hours (fallback).")
-    # Fetch info and messages sequentially for simplicity in sync fallback
-    for channel_id in channel_ids_fallback:
-        try:
-            channel_info = asyncio.run(fetch_channel_info(channel_id)) # Run async helper synchronously
-            channel_name = channel_info.get('name', f'Unknown-{channel_id}')
-            channel_names_fallback[channel_id] = channel_name
-            print(f"Processing channel (fallback): {channel_name} ({channel_id})")
-
-            messages = asyncio.run(fetch_messages(channel_id, hours=args.hours)) # Run async helper synchronously
-
-            if not messages:
-                print(f"  No messages found (fallback).")
-                continue
-
-            print(f"  Found {len(messages)} messages (fallback).")
-            total_messages_fallback += len(messages)
-
-            for msg in messages:
-                 if msg.get('content'):
-                    author = msg.get('author', {}).get('global_name') or msg.get('author', {}).get('username', 'Unknown')
-                    all_messages_data_fallback.append({
-                        'channel': channel_name,
-                        'author': author,
-                        'content': msg['content'],
-                        'timestamp': msg.get('timestamp')
-                    })
-        except Exception as e:
-            print(f"Error processing channel {channel_id} in fallback: {e}")
+    try:
+        # Run the async fetch function synchronously, passing the user token
+        all_messages_data_fallback, channel_names_fallback, total_messages_fallback = asyncio.run(
+            fetch_and_process_channel_data(CHANNEL_IDS, args.hours, TOKEN)
+        )
+    except Exception as e:
+        print(f"Error during data fetching in fallback: {e}")
+        return # Stop if fetching fails
 
     if not all_messages_data_fallback:
         print("No messages found in any channels for fallback.")
         return
 
-    all_messages_data_fallback.sort(key=lambda x: x.get('timestamp', ''))
+    # --- Aggregate and Summarize ---
     conversation_text_fallback = ""
     for msg in all_messages_data_fallback:
-        conversation_text_fallback += f"[{msg['channel']}] {msg['author']}: {msg['content']}\n"
+        if msg.get('content'):
+            conversation_text_fallback += f"[{msg['channel']}] {msg['author']}: {msg['content']}\n"
+
+    if not conversation_text_fallback.strip():
+        print("No message content found to summarize after filtering (fallback).")
+        return
 
     # Generate summary (run async helper synchronously)
     print(f"Generating aggregated summary for {total_messages_fallback} messages (fallback)...")
-    summary_fallback = asyncio.run(generate_summary(conversation_text_fallback, config_type_fallback))
+    try:
+        summary_fallback = asyncio.run(generate_summary(conversation_text_fallback, config_type_fallback))
+    except Exception as e:
+        print(f"Error during summary generation in fallback: {e}")
+        summary_fallback = f"Error generating summary: {e}" # Use error message as summary
 
-    # Format summary
+    # --- Format and Send ---
+    # Use the original fallback formatting with ">"
     formatted_lines_fallback = [f"> {line}" for line in summary_fallback.split("\n") if line.strip()]
     formatted_summary_fallback = "\n".join(formatted_lines_fallback)
 
     # Create header
     channel_list_fallback = ", ".join(channel_names_fallback.values())
     header_fallback = f"**Aggregated Summary ({config_type_fallback.lower().capitalize()}) of {len(channel_names_fallback)} Channels ({total_messages_fallback} msgs) (Fallback):**\n{channel_list_fallback}\n\n"
+    # Note: Fallback doesn't include the ASCII art ending block
     full_message_fallback = header_fallback + formatted_summary_fallback
 
     # Send summary using user token
-    print(f"Sending summary to Discord channel {output_channel_id_fallback} using user token (fallback)...")
+    print(f"Sending summary to Discord channel {OUTPUT_CHANNEL_ID} using user token (fallback)...")
     message_parts_fallback = split_message(full_message_fallback)
     success_count_fallback = 0
     for i, part in enumerate(message_parts_fallback):
-        if send_user_message(output_channel_id_fallback, part):
+        # Use the global OUTPUT_CHANNEL_ID
+        if send_user_message(OUTPUT_CHANNEL_ID, part):
             success_count_fallback += 1
         else:
             print(f"Failed to send part {i+1} via user token.")
@@ -531,65 +544,48 @@ def run_fallback_synchronously(config_type_fallback):
         print("Summary sent successfully via user token (fallback).")
     else:
         print(f"Failed to send {len(message_parts_fallback) - success_count_fallback} parts via user token (fallback).")
-
     print("--- Fallback Processing Complete ---")
 
 
 # --- Main Execution Logic ---
 
 def run_debug_mode():
-    """Runs the message fetching and printing logic synchronously for debug mode."""
+    """
+    Runs the message fetching using the unified function and prints the aggregated
+    conversation text to the console. Runs synchronously using asyncio.run().
+    """
     print("--- Running in DEBUG mode ---")
-    config_type_debug = args.config.upper()
-    # Config already loaded globally, just use CHANNEL_IDS
+    config_type_debug = args.config.upper() # Use the global config_type
 
+    # Use globally loaded CHANNEL_IDS
     if not CHANNEL_IDS:
          print(f"Error: No channel IDs configured for debug config '{args.config}'. Cannot proceed.")
          return
 
-    all_messages_debug = []
-    channel_names_debug = {}
-    total_messages_debug = 0
-
+    # --- Fetch data using the unified function ---
     print(f"Fetching messages from the last {args.hours} hours (debug).")
-    # Fetch info and messages sequentially for simplicity in sync debug
-    for channel_id in CHANNEL_IDS:
-        try:
-            channel_info = asyncio.run(fetch_channel_info(channel_id))
-            channel_name = channel_info.get('name', f'Unknown-{channel_id}')
-            channel_names_debug[channel_id] = channel_name
-            print(f"Processing channel (debug): {channel_name} ({channel_id})")
-
-            messages = asyncio.run(fetch_messages(channel_id, hours=args.hours))
-
-            if not messages:
-                print(f"  No messages found (debug).")
-                continue
-
-            print(f"  Found {len(messages)} messages (debug).")
-            total_messages_debug += len(messages)
-
-            for msg in messages:
-                 if msg.get('content'):
-                    author = msg.get('author', {}).get('global_name') or msg.get('author', {}).get('username', 'Unknown')
-                    all_messages_debug.append({
-                        'channel': channel_name,
-                        'author': author,
-                        'content': msg['content'],
-                        'timestamp': msg.get('timestamp')
-                    })
-        except Exception as e:
-            print(f"Error processing channel {channel_id} in debug mode: {e}")
-
+    try:
+        # Run the async fetch function synchronously, passing the user token (needed for fetching)
+        all_messages_debug, channel_names_debug, total_messages_debug = asyncio.run(
+            fetch_and_process_channel_data(CHANNEL_IDS, args.hours, TOKEN)
+        )
+    except Exception as e:
+        print(f"Error during data fetching in debug mode: {e}")
+        return # Stop if fetching fails
 
     if not all_messages_debug:
         print("No messages found in any channels for debug.")
         return
 
-    all_messages_debug.sort(key=lambda x: x.get('timestamp', ''))
+    # --- Aggregate and Print ---
     conversation_text_debug = ""
     for msg in all_messages_debug:
-        conversation_text_debug += f"[{msg['channel']}] {msg['author']}: {msg['content']}\n"
+        if msg.get('content'):
+            conversation_text_debug += f"[{msg['channel']}] {msg['author']}: {msg['content']}\n"
+
+    if not conversation_text_debug.strip():
+        print("No message content found to print after filtering (debug).")
+        return
 
     print("\n" + "="*50)
     print(f"AGGREGATED CONVERSATION ({config_type_debug.lower().capitalize()}) - {total_messages_debug} messages")
