@@ -13,26 +13,39 @@ A tool that fetches messages from Discord channels and generates summaries using
    ```
    # Discord user token (for reading messages)
    DISCORD_TOKEN=your_discord_user_token
-   
    # Discord bot token (for sending summaries)
    BOT_TOKEN=your_discord_bot_token
-   
-   # Comma-separated list of channel IDs to monitor
-   CHANNEL_IDS=channel_id1,channel_id2
-   
-   # Channel ID where summaries will be sent
-   OUTPUT_CHANNEL_ID=output_channel_id
-   
+
+   # --- DeFi Configuration ---
+   # Comma-separated list of DeFi channel IDs to monitor
+   DEFI_CHANNEL_IDS=defi_channel_id1,defi_channel_id2
+   # DeFi Channel ID where summaries will be sent
+   DEFI_OUTPUT_CHANNEL_ID=defi_output_channel_id
+
+   # --- Ordinals Configuration ---
+   # Comma-separated list of Ordinals channel IDs to monitor
+   ORDINALS_CHANNEL_IDS=ordinals_channel_id1,ordinals_channel_id2
+   # Ordinals Channel ID where summaries will be sent
+   ORDINALS_OUTPUT_CHANNEL_ID=ordinals_output_channel_id
+
    # OpenRouter API key for AI summaries
    OPENROUTER_API_KEY=your_openrouter_api_key
    ```
 
-3. Customize `prompt.txt` with your desired prompt for the AI summarizer. This file contains the instructions for how the summaries should be generated.
+3. Customize `prompt.txt` (for DeFi summaries) and `ordinals-prompt.txt` (for Ordinals summaries) with your desired prompts for the AI summarizer.
 
-4. Run the script:
-   ```
-   python fast_summarizer.py
-   ```
+4. Run the script, specifying the configuration:
+    ```
+   # For DeFi summary
+   python fast_summarizer.py --config defi
+
+   # For Ordinals summary (using the same script)
+   python fast_summarizer.py --config ordinals
+
+   # Or use the ordinals_summarizer.py script (defaults to --config ordinals)
+   python ordinals_summarizer.py
+   python ordinals_summarizer.py --config defi # Can also run defi config
+    ```
 
 ## Discord Bot Setup
 
@@ -60,3 +73,4 @@ If the bot fails to send messages, the script will fall back to using the user t
 - `--hours`: Number of hours of chat history to fetch (default: 12)
 - `--limit`: Maximum number of messages per channel (default: 50)
 - `--debug`: Print messages to console instead of summarizing. In debug mode, nothing will be sent to Discord.
+- `--config`: Specify the configuration to use: `defi` or `ordinals`. Determines which channel IDs, output channel, and prompt file are used. (Default: `defi` for `fast_summarizer.py`, `ordinals` for `ordinals_summarizer.py`).
