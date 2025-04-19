@@ -13,6 +13,7 @@ import tiktoken
 from dotenv import load_dotenv
 import discord
 import asyncio
+import re
 
 # Load environment variables
 load_dotenv()
@@ -272,7 +273,8 @@ def send_user_message(channel_id, content):
     except Exception as e:
         print(f"Exception sending message via user token: {e}")
         return False
-async def generate_summary(text, config_type_local, model_name="google/gemini-2.0-flash-001"):
+#async def generate_summary(text, config_type_local, model_name="google/gemini-2.0-flash-001"):
+async def generate_summary(text, config_type_local, model_name="google/gemini-2.5-flash-preview"):
     """Generate a summary using OpenRouter API asynchronously"""
     print(f"Generating summary using {model_name} for config '{config_type_local.lower()}'...")
     prompt = load_prompt(config_type_local)
@@ -301,7 +303,12 @@ async def generate_summary(text, config_type_local, model_name="google/gemini-2.
             timeout=180 # Add a timeout (e.g., 3 minutes)
         )
         if response.status_code == 200:
-            return response.json()["choices"][0]["message"]["content"]
+            content = response.json()["choices"][0]["message"]["content"]
+            # 1. Wrap URLs in markdown links: [Title](URL) -> [Title](<URL>)
+            modified_content = re.sub(r'\[([^\]]+)\]\(([^)\s]+)\)', r'[\1](<\2>)', content)
+            # 2. Wrap plain URLs: http://... -> <http://...> (avoiding those already wrapped or in markdown links)
+            modified_content = re.sub(r'(?<![<(])(https?://[^\s<>]+)(?![)>])', r'<\1>', modified_content)
+            return modified_content
         else:
             print(f"OpenRouter API error: {response.status_code}, {response.text}")
             return f"Error generating summary: API returned status code {response.status_code}"
