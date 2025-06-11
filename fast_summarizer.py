@@ -273,7 +273,7 @@ def send_user_message(channel_id, content):
     except Exception as e:
         print(f"Exception sending message via user token: {e}")
         return False
-#async def generate_summary(text, config_type_local, model_name="google/gemini-2.0-flash-001"):
+#async def generate_summary(text, config_type_local, model_name="deepseek/deepseek-r1-0528:free"):
 async def generate_summary(text, config_type_local, model_name="google/gemini-2.5-flash-preview"):
     """Generate a summary using OpenRouter API asynchronously"""
     print(f"Generating summary using {model_name} for config '{config_type_local.lower()}'...")
@@ -419,28 +419,16 @@ async def process_channels_and_summarize(config_type_local):
     header = f"**Aggregated Summary ({config_type_local.lower().capitalize()}) of {len(channel_names)} Channels ({total_messages_found} msgs):**\n{channel_list}\n\n"
 
     # Ending ASCII art
-    #ending_ascii_art = """* . ﹢ ˖ ✦ ¸ . ﹢ ° ¸. ° ˖ ･ ·̩ ｡ ☆ ﾟ ＊ ¸* . ﹢ ˖ ✦ ¸ . ﹢ ° ¸. ° ˖ ･ ·̩ ｡ ☆ ﾟ ＊ ¸* . ﹢ ˖ ✦ ¸ . ﹢ ° ¸. ° ˖ ･ ·̩ ｡ ☆ ﾟ ＊ ¸* . ﹢ ˖ ✦ ¸ . ﹢ ° ¸. ° ˖ ･ ·̩ ｡ ☆ ﾟ ＊ ¸* . ﹢ ˖ ✦ ¸ . ﹢ ° ¸. ° ˖ ･ ·̩ ｡ ☆ ﾟ ＊ ¸* . ﹢ ˖ ✦ ¸ . ﹢ ° ¸. ° ˖ ･ ·̩ ｡ ☆ ﾟ ＊ ¸* . ﹢ ˖ ✦ ¸ . ﹢ ° ¸. ° ˖ ･ ·̩ ｡ ☆ ﾟ ＊"""
-    ending_ascii_art = """. 　　 　　　　　　　 ✦ 　　　　　　　　　　 　 ‍ ‍ ‍ ‍ 　　　　 　　　　　　　　　　　　,　　 　
+    ending_ascii_art = """* . ﹢ ˖ ✦ ¸ . ﹢ ° ¸. ° ˖ ･ ·̩ ｡ ☆ ﾟ ＊ ¸* . ﹢ ˖ ✦ ¸ . ﹢ ° ¸. ° ˖ ･ ·̩ ｡ ☆ ﾟ ＊ ¸* . ﹢ ˖ ✦ ¸ . ﹢ ° ¸. ° ˖ ･ ·̩ ｡ ☆ ﾟ ＊ ¸* . ﹢ ˖ ✦ ¸ . ﹢ ° ¸. ° ˖ ･ ·̩ ｡ ☆ ﾟ ＊ ¸* . ﹢ ˖ ✦ ¸ . ﹢ ° ¸. ° ˖ ･ ·̩ ｡ ☆ ﾟ ＊ ¸* . ﹢ ˖ ✦ ¸ . ﹢ ° ¸. ° ˖ ･ ·̩ ｡ ☆ ﾟ ＊ ¸* . ﹢ ˖ ✦ ¸ . ﹢ ° ¸. ° ˖ ･ ·̩ ｡ ☆ ﾟ ＊"""
+    
+    # Keep main message without ASCII art
+    full_message = header + formatted_summary
 
-.　　　　　　　　　　　　　.　　　ﾟ　 　　　.　　　　　　　　 🌑 　　　　　 　　　　　.　　　　　　　　　　　.　　　　　　　　　　 　
-
-　˚　　　　　　　　　　　　　　　　　　　　　ﾟ　　　　　.　　　　　　　　　　　　　　　. 　　 　 🌎 ‍ ‍ ‍ ‍ ‍ ‍ ‍ ‍ ‍ ‍ ,　 　　　　　　　　　　　　　　* .　　　　　 　　　　　　　　　　　　　　.　　　　　　　　　　 ✦ 　　　　 　 　　　˚　　　　　　　　　　　　　　*　　　　　　 　　　　　　　　　　　　　　　.　　
-
-.　　　　　　　　　　　　　.　　　ﾟ　 　　　.　　　　　　　　　　　　　.
-
-　　　　　　,　　　　　　　.　　　　　　 　　　　 　　　　　　　　　　　　　　　　　　 ☀️ 　　　　　　　　　　　　　　　　　　 　 　　　　　 　　　　*　　　　　　　　　. 　　　　　　　　　　.　　　　　　　　　　　　　. 　　　　　　　　　　　　　　　　 　 　　　　 　　　　　　　　　　　　　　　　 　 　　　　　　　　　　　　　　　　 　 ✦ 　 　　　,　　　　　　　　　*　　 🚀 　　　　 　　,　　　 ‍ ‍ ‍ ‍ 　 　　　　　　　　　　　　.　　　　　 　　 　　　.　　　　　　　　　　　　　 　 　　　　　　　　　　　　　　　　　　　˚　　　 　 　　　　,　　　　　　　　　　　 　 　　　　　　　　　　　　　　　　.　　　 　　 　　　　　 　　　　
-
-　　　　　　　　　
-
-　　　　　　　　　　　　　* 　　 　　　　　 ✦ 　　　　　　　 　 　　　　 　　 　　　　　　　 　　　　　.　　　　　　　　　　　　　　　　　　.　　　　　 　　. 　 　　　　　.　　　　 🌑 　　　　　 　　　　　.　　　　　　　　　　　.　　　　　　　　　　 　
-
-　˚　　　　　　　　　　　　　　　　　　　　　ﾟ　　　　　.　　　　　　　　　　　　　　　."""
-    ending_art_code_block = f"\n\n\n```\n{ending_ascii_art}\n```" # Added extra \n for separation
-
-    full_message = header + formatted_summary + ending_art_code_block
+    # Return ASCII art separately to be sent in its own message
+    ending_art_code_block = f"```\n{ending_ascii_art}\n```"
 
     print("--- Channel Processing Complete ---")
-    return full_message
+    return full_message, ending_art_code_block
 
 # --- Bot Event Handler ---
 
@@ -450,9 +438,9 @@ async def on_ready():
     print(f'Bot logged in as {bot_client.user} (ID: {bot_client.user.id})')
     print('------')
 
-    summary_message = None
+    summary_message = ending_art = None
     try:
-        summary_message = await process_channels_and_summarize(config_type)
+        summary_message, ending_art = await process_channels_and_summarize(config_type)
     except Exception as e:
         print(f"Error during channel processing and summarization: {e}")
         # Optionally try to send an error message via bot
@@ -463,10 +451,18 @@ async def on_ready():
 
     if summary_message:
         print(f"Sending summary to Discord channel {OUTPUT_CHANNEL_ID} using bot...")
+        # Send main message parts first
         message_parts = split_message(summary_message)
         success_count = 0
         for i, part in enumerate(message_parts):
             success = await send_bot_message(OUTPUT_CHANNEL_ID, part)
+            if success:
+                success_count += 1
+            await asyncio.sleep(1) # Delay between parts
+
+        # Send ASCII art in separate message if it exists
+        if ending_art:
+            await send_bot_message(OUTPUT_CHANNEL_ID, ending_art)
             if success:
                 success_count += 1
             else:
