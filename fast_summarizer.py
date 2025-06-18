@@ -75,13 +75,18 @@ bot_client = discord.Client(intents=intents)
 def load_prompt(config_type_local):
     """Load the prompt from the appropriate file based on config"""
     prompt_file = 'prompt.txt' if config_type_local.lower() == 'defi' else 'ordinals-prompt.txt'
+    # Build an absolute path relative to this script's directory so cron executions work
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    prompt_path = os.path.join(script_dir, prompt_file)
     try:
-        with open(prompt_file, 'r') as file:
+        with open(prompt_path, 'r') as file:
             return file.read()
     except Exception as e:
-        print(f"Warning: Error loading {prompt_file}: {e}. Using default prompt.")
+        print(f"Warning: Error loading {prompt_path}: {e}. Using default prompt.")
         # Fallback prompt if file can't be loaded
-        return "Please summarize the following text in bullet point format for a cryptocurrency trader looking for alpha so he can act on important ideas. If the bullet point doesn't have anything to do with defi or crypto, just skip it."
+        return ("Please summarize the following text in bullet point format for a cryptocurrency trader "
+                "looking for alpha so he can act on important ideas. If the bullet point doesn't have "
+                "anything to do with defi or crypto, just skip it.")
 
 # Original fetch_messages removed, logic moved to fetch_and_process_channel_data
 
@@ -285,8 +290,12 @@ async def generate_summary(text, config_type_local, model_name="google/gemini-2.
             {"role": "system", "content": "You are a helpful assistant for text summarization."},
             {"role": "user", "content": f"{prompt}\n{text}"},
         ],
-        "max_tokens": 8000, # Consider making this configurable or dynamic
         "temperature": 0.7,
+        "reasoning": {
+            "enabled": true,
+            "effort": "high",
+            "exclude": True
+        }
     }
     request_headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
