@@ -292,7 +292,7 @@ async def generate_summary(text, config_type_local, model_name="google/gemini-2.
         ],
         "temperature": 0.7,
         "reasoning": {
-            "enabled": true,
+            "enabled": True,
             "effort": "high",
             "exclude": True
         }
