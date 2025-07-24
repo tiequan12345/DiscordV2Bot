@@ -49,7 +49,7 @@ python fast_summarizer.py --config defi
 
 ---
 
-## 4. `.env` Template
+## 4. `.env` Template (mv .env.copy .env)
 
 ```dotenv
 ################################
@@ -57,13 +57,16 @@ python fast_summarizer.py --config defi
 ################################
 OPENROUTER_API_KEY=pk-xxxxxxxxxxxxxxxx          # get from https://openrouter.ai
 BOT_TOKEN=MTSx...                               # Discord Bot token
-DISCORD_TOKEN=eyJ...                            # (optional) user account token for fallback/extra fetch rights
+DISCORD_TOKEN=eyJ...                            # (optional) user account token for 
+#DISCORD Token Tutorial (remember this is against their terms & services): https://www.howtogeek.com/879956/what-is-a-discord-token-and-how-do-you-get-one/
+#Discord Bot token tutorial (So your summaries can come from a bot in a server you own rather than your user account): https://www.writebots.com/discord-bot-token/
 
 ################################
 # -------- DeFi --------------
 ################################
-DEFI_CHANNEL_IDS=123456789012345678,987654321098765432
-DEFI_OUTPUT_CHANNEL_ID=111222333444555666
+DEFI_CHANNEL_IDS=123456789012345678,987654321098765432 #These are the channels you grab the source chat transcripts from
+DEFI_OUTPUT_CHANNEL_ID=111222333444555666  #This is the channel you post summaries to
+#To get a channel ID, right click on a channel, and click Copy Channel ID
 
 ################################
 # -------- Ordinals ----------
@@ -97,10 +100,13 @@ python fast_summarizer.py --config ordinals --hours 6 --debug
 
 ## 6. How It Works (high-level)
 
-1. Fetcher (`fetcher.py`) pulls recent messages via Discord’s public HTTP API.
-2. Text is concatenated and passed to `generate_summary()` (OpenRouter).
-3. The summary is chunk-split to respect Discord’s 2 000 char limit (`utils.split_message`).
-4. Sender (`sender.py`) tries to post via bot. If that fails it retries once with your user token.
+1. **Fetch** – `fast_summarizer.py` makes lightweight HTTP calls (Discord public API) to pull recent messages from every channel you configured. No privileged intents are required.
+2. **Aggregate** – Messages are concatenated into a single plain-text transcript.
+3. **Summarise** – The transcript plus a tailor-made prompt are sent to OpenRouter’s `/chat/completions` endpoint (default model: Google Gemini Flash 2.5).
+4. **Chunk** – The resulting summary is split by the built-in `split_message()` helper to respect Discord’s 2 000-character limit.
+5. **Send** – The script tries your **bot token** first. If posting fails (e.g., missing perms) it retries once with your **user token**.
+   
+Everything happens inside the same Python file; you don’t need (and won’t find) separate *fetcher* or *sender* modules.
 
 ---
 
@@ -149,16 +155,6 @@ Prompt files live in the repo root:
 * `ordinals-prompt.txt` – Ordinals
 
 Edit them freely; the summariser reads the correct file based on `--config`.
-
----
-
-## 10. Contributing
-
-PRs and issue reports are welcome! Focus areas:
-
-* Cleaner prompt engineering
-* More granular error handling
-* Additional summarisation models
 
 ---
 
