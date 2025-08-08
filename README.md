@@ -19,8 +19,9 @@ Everything is handled by **`fast_summarizer.py`** – no other runner scripts ar
 ## 2. Prerequisites
 
 1. **Python 3.9 +** (tested on 3.10).
-2. A free [OpenRouter](https://openrouter.ai) account & API key.
-3. A Discord **bot** (for sending) *and* optionally a **user token** (for reading & fallback).
+2. [uv](https://docs.astral.sh/uv/) - Python package manager.
+3. A free [OpenRouter](https://openrouter.ai) account & API key.
+4. A Discord **bot** (for sending) *and* optionally a **user token** (for reading & fallback).
    • The bot only needs "Send Messages" + "Read Message History".
    • If you do not supply a user token the fetcher can still work, but some endpoints (e.g. private servers) may be inaccessible.
 
@@ -33,23 +34,19 @@ Everything is handled by **`fast_summarizer.py`** – no other runner scripts ar
 git clone https://github.com/youruser/DiscordV2Bot.git
 cd DiscordV2Bot
 
-# 2. (Optional but recommended) create and activate a venv
-python3 -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
+# 2. Install dependencies with uv
+uv pip install -r requirements.txt
 
-# 3. Install dependencies
-pip install -r requirements.txt
+# 3. Create a .env file (see template below)
+cp .env.copy .env           # or create manually
 
-# 4. Create a .env file (see template below)
-cp .env.example .env           # or create manually
-
-# 5. Run (DeFi config)
-python fast_summarizer.py --config defi
+# 4. Run (DeFi config)
+uv run python fast_summarizer.py --config defi
 ```
 
 ---
 
-## 4. `.env` Template (mv .env.copy .env)
+## 4. `.env` Template
 
 ```dotenv
 ################################
