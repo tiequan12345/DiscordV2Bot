@@ -312,8 +312,11 @@ async def generate_summary(text, config_type_local, model_name=default_model):
                 {"role": "system", "content": "You are a helpful assistant for text summarization."},
                 {"role": "user", "content": f"{prompt}\n{text}"},
             ],
-            "temperature": 0.7,
         }
+        # Only add temperature if it's not the default value (1.0) for models that support it
+        # Some OpenAI models only support temperature=1.0
+        if model_name != "gpt-5-mini-2025-08-07":  # Add other models that don't support temperature here
+            request_payload["temperature"] = 0.7
         try:
             response = await asyncio.to_thread(
                 openai.ChatCompletion.create,
