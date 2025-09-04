@@ -14,9 +14,20 @@ from dotenv import load_dotenv
 import discord
 import asyncio
 import re
+import openai
 
 # Load environment variables
 load_dotenv()
+
+# Configure OpenAI if key is provided
+if os.getenv('OPENAI_API_KEY'):
+    openai.api_key = os.getenv('OPENAI_API_KEY')
+
+# Set default model based on provider
+if DEFAULT_AI_PROVIDER == 'openai':
+    default_model = DEFAULT_OPENAI_MODEL
+else:
+    default_model = "google/gemini-2.5-flash-preview"
 
 # Parse command-line arguments
 parser = argparse.ArgumentParser(description='Discord Fast Channel Summarizer')
@@ -38,6 +49,9 @@ CHANNEL_IDS = [int(id) for id in channel_ids_str.split(',') if id]
 # Load output channel ID based on config
 OUTPUT_CHANNEL_ID = int(os.getenv(f'{config_type}_OUTPUT_CHANNEL_ID', '0'))
 OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY')
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+DEFAULT_AI_PROVIDER = os.getenv('DEFAULT_AI_PROVIDER', 'openai').lower()
+DEFAULT_OPENAI_MODEL = os.getenv('DEFAULT_OPENAI_MODEL', 'gpt-5-mini-2025-08-07')
 
 # Validate required config (common for both bot and fallback)
 if not CHANNEL_IDS or OUTPUT_CHANNEL_ID == 0:
@@ -49,9 +63,13 @@ if not CHANNEL_IDS or OUTPUT_CHANNEL_ID == 0:
     exit(1) # Exit if config is missing
 
 # Validate API keys needed for summarization (if not in debug mode)
-if not args.debug and not OPENROUTER_API_KEY:
-    print("Error: OPENROUTER_API_KEY environment variable not set. Cannot generate summaries.")
-    exit(1)
+if not args.debug:
+    if DEFAULT_AI_PROVIDER == 'openai' and not OPENAI_API_KEY:
+        print("Error: OPENAI_API_KEY environment variable not set. Cannot generate summaries.")
+        exit(1)
+    elif DEFAULT_AI_PROVIDER != 'openai' and not OPENROUTER_API_KEY:
+        print("Error: OPENROUTER_API_KEY environment variable not set. Cannot generate summaries.")
+        exit(1)
 
 # Validate token presence (need at least one)
 if not args.debug and not BOT_TOKEN and not TOKEN:
@@ -279,54 +297,80 @@ def send_user_message(channel_id, content):
         print(f"Exception sending message via user token: {e}")
         return False
 #async def generate_summary(text, config_type_local, model_name="deepseek/deepseek-r1-0528:free"):
-async def generate_summary(text, config_type_local, model_name="google/gemini-2.5-flash-preview"):
-    """Generate a summary using OpenRouter API asynchronously"""
-    print(f"Generating summary using {model_name} for config '{config_type_local.lower()}'...")
+async def generate_summary(text, config_type_local, model_name=default_model):
+    """Generate a summary using selected AI provider asynchronously"""
+    print(f"Generating summary using {model_name} ({DEFAULT_AI_PROVIDER}) for config '{config_type_local.lower()}'...")
     prompt = load_prompt(config_type_local)
 
-    request_payload = {
-        "model": model_name,
-        "messages": [
-            {"role": "system", "content": "You are a helpful assistant for text summarization."},
-            {"role": "user", "content": f"{prompt}\n{text}"},
-        ],
-        "temperature": 0.7,
-        "reasoning": {
-            "enabled": True,
-            "effort": "high",
-            "exclude": True
+    if DEFAULT_AI_PROVIDER == 'openai':
+        # Use OpenAI API
+        request_payload = {
+            "model": model_name,
+            "messages": [
+                {"role": "system", "content": "You are a helpful assistant for text summarization."},
+                {"role": "user", "content": f"{prompt}\n{text}"},
+            ],
+            "temperature": 0.7,
         }
-    }
-    request_headers = {
-        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-        "HTTP-Referer": "https://github.com/DiscordV2Bot", # Optional: Identify your app
-        "X-Title": "Discord Fast Channel Summarizer" # Optional: Identify your app
-    }
-
-    try:
-        response = await asyncio.to_thread(
-            requests.post,
-            url="https://openrouter.ai/api/v1/chat/completions",
-            headers=request_headers,
-            json=request_payload,
-            timeout=180 # Add a timeout (e.g., 3 minutes)
-        )
-        if response.status_code == 200:
-            content = response.json()["choices"][0]["message"]["content"]
-            # 1. Wrap URLs in markdown links: [Title](URL) -> [Title](<URL>)
+        try:
+            response = await asyncio.to_thread(
+                openai.ChatCompletion.create,
+                **request_payload
+            )
+            content = response.choices[0].message.content
+            # Post-process content similar to OpenRouter
             modified_content = re.sub(r'\[([^\]]+)\]\(([^)\s]+)\)', r'[\1](<\2>)', content)
-            # 2. Wrap plain URLs: http://... -> <http://...> (avoiding those already wrapped or in markdown links)
             modified_content = re.sub(r'(?<![<(])(https?://[^\s<>]+)(?![)>])', r'<\1>', modified_content)
             return modified_content
-        else:
-            print(f"OpenRouter API error: {response.status_code}, {response.text}")
-            return f"Error generating summary: API returned status code {response.status_code}"
-    except requests.Timeout:
-        print("Error in OpenRouter API call: Request timed out.")
-        return "Error generating summary: Request timed out."
-    except Exception as e:
-        print(f"Error in OpenRouter API call: {e}")
-        return f"Error generating summary: {e}"
+        except Exception as e:
+            print(f"Error in OpenAI API call: {e}")
+            return f"Error generating summary: {e}"
+
+    else:
+        # Use OpenRouter API
+        request_payload = {
+            "model": model_name,
+            "messages": [
+                {"role": "system", "content": "You are a helpful assistant for text summarization."},
+                {"role": "user", "content": f"{prompt}\n{text}"},
+            ],
+            "temperature": 0.7,
+            "reasoning": {
+                "enabled": True,
+                "effort": "high",
+                "exclude": True
+            }
+        }
+        request_headers = {
+            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+            "HTTP-Referer": "https://github.com/DiscordV2Bot", # Optional: Identify your app
+            "X-Title": "Discord Fast Channel Summarizer" # Optional: Identify your app
+        }
+
+        try:
+            response = await asyncio.to_thread(
+                requests.post,
+                url="https://openrouter.ai/api/v1/chat/completions",
+                headers=request_headers,
+                json=request_payload,
+                timeout=180 # Add a timeout (e.g., 3 minutes)
+            )
+            if response.status_code == 200:
+                content = response.json()["choices"][0]["message"]["content"]
+                # 1. Wrap URLs in markdown links: [Title](URL) -> [Title](<URL>)
+                modified_content = re.sub(r'\[([^\]]+)\]\(([^)\s]+)\)', r'[\1](<\2>)', content)
+                # 2. Wrap plain URLs: http://... -> <http://...> (avoiding those already wrapped or in markdown links)
+                modified_content = re.sub(r'(?<![<(])(https?://[^\s<>]+)(?![)>])', r'<\1>', modified_content)
+                return modified_content
+            else:
+                print(f"OpenRouter API error: {response.status_code}, {response.text}")
+                return f"Error generating summary: API returned status code {response.status_code}"
+        except requests.Timeout:
+            print("Error in OpenRouter API call: Request timed out.")
+            return "Error generating summary: Request timed out."
+        except Exception as e:
+            print(f"Error in OpenRouter API call: {e}")
+            return f"Error generating summary: {e}"
 
 def split_message(message, max_length=2000):
     """Split a message into chunks of max_length."""
