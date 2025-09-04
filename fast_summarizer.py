@@ -19,6 +19,10 @@ import openai
 # Load environment variables
 load_dotenv()
 
+# Load AI provider and model configuration
+DEFAULT_AI_PROVIDER = os.getenv('DEFAULT_AI_PROVIDER', 'openai').lower()
+DEFAULT_OPENAI_MODEL = os.getenv('DEFAULT_OPENAI_MODEL', 'gpt-5-mini-2025-08-07')
+
 # Configure OpenAI if key is provided
 if os.getenv('OPENAI_API_KEY'):
     openai.api_key = os.getenv('OPENAI_API_KEY')
@@ -50,8 +54,6 @@ CHANNEL_IDS = [int(id) for id in channel_ids_str.split(',') if id]
 OUTPUT_CHANNEL_ID = int(os.getenv(f'{config_type}_OUTPUT_CHANNEL_ID', '0'))
 OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY')
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
-DEFAULT_AI_PROVIDER = os.getenv('DEFAULT_AI_PROVIDER', 'openai').lower()
-DEFAULT_OPENAI_MODEL = os.getenv('DEFAULT_OPENAI_MODEL', 'gpt-5-mini-2025-08-07')
 
 # Validate required config (common for both bot and fallback)
 if not CHANNEL_IDS or OUTPUT_CHANNEL_ID == 0:
